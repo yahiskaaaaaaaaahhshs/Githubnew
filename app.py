@@ -91,7 +91,7 @@ def check_bin():
             return jsonify({
                 "card": card_data,
                 "bin": bin_num,
-                "response": "No exact BIN match, but similar BINs found",
+                "response": "No exact BIN match",
                 "similar_bins": partial_matches,
                 "status": "partial_match"
             })
