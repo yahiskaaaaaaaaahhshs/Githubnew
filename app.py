@@ -1,81 +1,112 @@
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, jsonify
 import os
-from functools import wraps
+import re
 
 app = Flask(__name__)
 
-# API Configuration
-CORRECT_API_KEY = "yashikaaa"
-
-def load_bin_data():
-    bin_data = {}
-    file_path = os.path.join(os.path.dirname(__file__), 'bin.txt')
-    if not os.path.exists(file_path):
-        return bin_data
-        
-    with open(file_path, 'r') as file:
+# Load BIN database into memory
+def load_bin_database():
+    bin_db = {}
+    with open('bin.txt', 'r') as file:
         for line in file:
             line = line.strip()
-            if not line:
-                continue
-            parts = line.split('|')
-            if len(parts) >= 3:
-                bin_number = parts[0].strip()
-                status = parts[1].strip()
-                description = parts[2].strip()
-                bin_data[bin_number] = {
-                    'status': status,
-                    'description': description
-                }
-    return bin_data
+            if line and '|' in line:
+                bin_num, details = line.split('|', 1)
+                bin_db[bin_num] = details.strip()
+    return bin_db
 
-bin_db = load_bin_data()
+bin_db = load_bin_database()
 
-def require_api_key(view_function):
-    @wraps(view_function)
-    def decorated_function(*args, **kwargs):
-        api_key = request.args.get('key') or request.headers.get('X-API-KEY')
-        if api_key != CORRECT_API_KEY:
-            abort(401, description="Invalid API key. Use ?key=yashikaaa")
-        return view_function(*args, **kwargs)
-    return decorated_function
+# Valid API key
+VALID_API_KEY = "yashikaaa"
 
-@app.route('/bin/<bin_number>', methods=['GET'])
-@require_api_key
-def lookup_bin(bin_number):
-    # Exact match check
-    if bin_number in bin_db:
+def validate_card_details(cc, mm, yy, cvv):
+    """Validate card details format"""
+    if not (cc.isdigit() and len(cc) >= 6):
+        return False, "Invalid card number"
+    if not (mm.isdigit() and 1 <= int(mm) <= 12):
+        return False, "Invalid month"
+    if not (yy.isdigit() and len(yy) in [2,4]):
+        return False, "Invalid year"
+    if not (cvv.isdigit() and len(cvv) in [3,4]):
+        return False, "Invalid CVV"
+    return True, ""
+
+@app.route('/check_bin', methods=['GET'])
+def check_bin():
+    # Get parameters
+    api_key = request.args.get('key')
+    card_data = request.args.get('format')
+    
+    # Validate API key
+    if api_key != VALID_API_KEY:
         return jsonify({
-            'bin': bin_number,
-            'status': bin_db[bin_number]['status'],
-            'description': bin_db[bin_number]['description'],
-            'success': True
+            "error": "Invalid API key",
+            "status": "unauthorized"
+        }), 401
+    
+    # Parse card data
+    if not card_data or '|' not in card_data:
+        return jsonify({
+            "error": "Invalid format",
+            "message": "Format should be cc|mm|yy|cvv or cc|mm|yyyy|cvv",
+            "status": "invalid_format"
+        }), 400
+    
+    parts = card_data.split('|')
+    if len(parts) != 4:
+        return jsonify({
+            "error": "Invalid format",
+            "message": "Format should be cc|mm|yy|cvv or cc|mm|yyyy|cvv",
+            "status": "invalid_format"
+        }), 400
+    
+    cc, mm, yy, cvv = parts
+    is_valid, validation_msg = validate_card_details(cc, mm, yy, cvv)
+    if not is_valid:
+        return jsonify({
+            "error": validation_msg,
+            "status": "invalid_card_details"
+        }), 400
+    
+    # Extract BIN (first 6 digits)
+    bin_num = cc[:6]
+    
+    # Check for exact BIN match in database
+    if bin_num in bin_db:
+        details = bin_db[bin_num]
+        # Determine status from emoji
+        status = "success" if "✅" in details else "failed"
+        return jsonify({
+            "card": card_data,
+            "bin": bin_num,
+            "response": details,
+            "status": status,
+            "match": "exact"
         })
-    
-    # Prefix match check (first 6 digits)
-    for stored_bin in bin_db:
-        if bin_number.startswith(stored_bin):
+    else:
+        # Check for partial matches (optional)
+        partial_matches = {k: v for k, v in bin_db.items() if k.startswith(bin_num[:4])}
+        if partial_matches:
             return jsonify({
-                'bin': bin_number,
-                'status': bin_db[stored_bin]['status'],
-                'description': bin_db[stored_bin]['description'],
-                'success': True,
-                'matched_prefix': stored_bin
+                "card": card_data,
+                "bin": bin_num,
+                "response": "No exact BIN match, but similar BINs found",
+                "similar_bins": partial_matches,
+                "status": "partial_match"
             })
-    
-    return jsonify({
-        'bin': bin_number,
-        'success': False,
-        'message': 'BIN not found'
-    }), 404
+        return jsonify({
+            "card": card_data,
+            "bin": bin_num,
+            "response": "BIN not found in database",
+            "status": "unknown",
+            "match": "none"
+        })
 
 @app.route('/')
 def home():
-    return """
-    BIN Lookup API<br>
-    Usage: /bin/&lt;bin_number&gt;?key=yashikaaa<br>
-    Example: <a href="/bin/400005?key=yashikaaa">/bin/400005?key=yashikaaa</a>
-    """
+    return "BIN Checker API is running. Use /check_bin endpoint with your API key."
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
