@@ -18,7 +18,7 @@ def load_bin_database():
 bin_db = load_bin_database()
 
 # Valid API key
-VALID_API_KEY = "yashikaaa"
+VALID_API_KEY = "OnyxEnvBot/Gate=Vbv"
 
 def validate_card_details(cc, mm, yy, cvv):
     """Validate card details format"""
